@@ -1,12 +1,12 @@
+#include <M5Stack.h>
 #include "BLEDevice.h"
 #include "HardwareSerial.h"
 #include "mbedtls/aes.h"
 #include "uuid.h"
-#include <M5Stack.h>
 
 const std::string MI_ADDR = "f7:f3:ef:13:b1:3d";
 
-// uint8_t _KEY [18] =  {0x01, 0x00, 0x28, 0x6b, 0xc5, 0x9d, 0x91, 0x95, 0x9a, 0x72, 0xe5, 0xcc, 0xb7, 0xaf, 0x62, 0x33, 0xee, 0x35};
+// Once the KEY is changed, MI Band 2 will see your device as a new client
 uint8_t _KEY [18] =  {0x01, 0x00, 0x82, 0xb6, 0x5c, 0xd9, 0x91, 0x95, 0x9a, 0x72, 0xe5, 0xcc, 0xb7, 0xaf, 0x62, 0x33, 0xee, 0x35};
 uint8_t _send_rnd_cmd[2] = {0x02, 0x00};
 uint8_t encrypted_num[18] = {0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
@@ -17,12 +17,13 @@ static bool doConnect = false;
 static bool connected = false;
 static mbedtls_aes_context aes;
 
-static int heartrate_count = 0;
+static uint8_t heartrate_count = 0;
+static uint8_t flag_hrm = 0;
+
+//hw_timer_t * timer = NULL;
 
 BLERemoteCharacteristic* pRemoteCharacteristic;
 BLERemoteCharacteristic* pAlertCharacteristic;
-BLERemoteCharacteristic* pAlertNotifyChar;
-BLERemoteCharacteristic* pBatteryCharacteristic;
 BLERemoteCharacteristic* pHRMMeasureCharacteristic;
 BLERemoteCharacteristic* pHRMControlCharacteristic;
 BLERemoteDescriptor* cccd_hrm;
@@ -36,6 +37,11 @@ enum authentication_flags {
 };
 
 authentication_flags auth_flag = require_random_number;
+
+//void IRAM_ATTR onTimer() {
+//	pHRMControlCharacteristic->writeValue(HRM_HEARTBEAT, 1, true);
+//	Serial.println("# Heart beat packet has been sent");
+//}
 
 static void notifyCallback_auth(BLERemoteCharacteristic* pBLERemoteCharacteristic, uint8_t* pData, size_t length, bool isNotify) {
 	switch (pData[1]) {
@@ -74,12 +80,7 @@ static void notifyCallback_auth(BLERemoteCharacteristic* pBLERemoteCharacteristi
 static void notifyCallback_heartrate(BLERemoteCharacteristic* pHRMMeasureCharacteristic, uint8_t* pData, size_t length, bool isNotify) {
 	Serial.printf("Get Heart Rate: ");
 	Serial.printf("%d\n", pData[1]);
-	heartrate_count++;
-	if (heartrate_count == 3) {
-		heartrate_count = 0;
-		pHRMControlCharacteristic->writeValue(HRM_HEARTBEAT, 1, true);
-    Serial.println("# Heart beat packet has been sent");
-	}
+	flag_hrm = 1;
 }
 
 bool connectToServer(BLEAddress pAddress) {
@@ -155,6 +156,7 @@ void setup() {
 	// ====================================================================
 	// Scan for the target device
 	// --------------------------------------------------------------------
+  M5.Lcd.setCursor(0, 0);
 	M5.Lcd.println("Scanning...");
 	BLEDevice::init("");
 	BLEScan* pBLEScan = BLEDevice::getScan();
@@ -219,5 +221,11 @@ void setup() {
 }
 
 void loop() {
-	delay(5000);
+  if (flag_hrm) {
+    pHRMControlCharacteristic->writeValue(HRM_HEARTBEAT, 1, true);
+    Serial.println("# Heart beat packet has been sent");
+    delay(12000);
+  } else {
+    delay(.5);
+  }
 }
