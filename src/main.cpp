@@ -17,7 +17,6 @@ static bool doConnect = false;
 static bool connected = false;
 static mbedtls_aes_context aes;
 
-static uint8_t heartrate_count = 0;
 static uint8_t flag_hrm = 0;
 
 //hw_timer_t * timer = NULL;
