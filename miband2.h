@@ -12,13 +12,52 @@ enum authentication_flags {
 	waiting = 4
 };
 
-authentication_flags	auth_flag = require_random_number;
+authentication_flags	auth_flag;
 mbedtls_aes_context		aes;
 
 static uint8_t			encrypted_num[18] = {0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
 static uint8_t			auth_key[18];
 static uint8_t			_send_rnd_cmd[2] = {0x02, 0x00};
 static uint8_t			none[2] = {0, 0};
+
+static void notifyCallback_auth(BLERemoteCharacteristic* pBLERemoteCharacteristic, uint8_t* pData, size_t length, bool isNotify) {
+	switch (pData[1]) {
+		case 0x01:
+			if (pData[2] == 0x01) {
+				auth_flag = require_random_number;
+			}
+			else {
+				auth_flag = auth_failed;
+			}
+			break;
+		case 0x02:
+			if (pData[2] == 0x01) {
+				mbedtls_aes_init(&aes);
+				mbedtls_aes_setkey_enc(&aes, (auth_key + 2), 128);
+				mbedtls_aes_crypt_ecb(&aes, MBEDTLS_AES_ENCRYPT, pData + 3, encrypted_num + 2);
+				mbedtls_aes_free(&aes);
+				auth_flag = send_encrypted_number;
+			} else {
+				auth_flag = auth_failed;
+			}
+			break;
+		case 0x03:
+			if (pData[2] == 0x01) {
+				auth_flag = auth_success;
+			}
+			else if (pData[2] == 0x04) {
+				auth_flag = send_key;
+			}
+			break;
+		default:
+			auth_flag = auth_failed;
+	}
+}
+
+static void notifyCallback_heartrate(BLERemoteCharacteristic* pHRMMeasureCharacteristic, uint8_t* pData, size_t length, bool isNotify) {
+	Serial.printf("Get Heart Rate: ");
+	Serial.printf("%d\n", pData[1]);
+}
 
 class DeviceSearcher: public BLEAdvertisedDeviceCallbacks {
 public:
@@ -109,6 +148,7 @@ public:
 		M5.Lcd.println(" |- CHAR_HRM_MEASURE");
 		cccd_hrm = pHRMMeasureCharacteristic->getDescriptor(CCCD_UUID);
 		M5.Lcd.println("   |- CCCD_HRM");
+		f_connected = true;
 		// ====================================================================
 
 		// ====================================================================
@@ -121,6 +161,7 @@ public:
 	}
 	
 	void authStart() {
+		auth_flag = require_random_number;
 		BLERemoteDescriptor* pauth_descripter;
 		pauth_descripter = pRemoteCharacteristic->getDescriptor(BLEUUID((uint16_t)0x2902));
 		M5.Lcd.println("   |- CCCD_AUTH");
@@ -153,9 +194,8 @@ public:
 		}
 		pauth_descripter->writeValue(none, 2, true);
 		Serial.println("# Sent NULL to CCCD_AUTH. AUTH process finished.");
-		if (f_connected && (auth_flag == auth_success)) {
-			Serial.println("# Auth success.");
-		}
+		while (!f_connected && (auth_flag == auth_success));
+		Serial.println("# Auth succeed.");
 	}
 	
 	void sendCmd() {
@@ -187,43 +227,4 @@ private:
 	BLERemoteCharacteristic	* pHRMMeasureCharacteristic;
 	BLERemoteCharacteristic	* pHRMControlCharacteristic;
 	BLERemoteDescriptor		* cccd_hrm;
-
-	static void notifyCallback_auth(BLERemoteCharacteristic* pBLERemoteCharacteristic, uint8_t* pData, size_t length, bool isNotify) {
-		switch (pData[1]) {
-			case 0x01:
-				if (pData[2] == 0x01) {
-					auth_flag = require_random_number;
-				}
-				else {
-					auth_flag = auth_failed;
-				}
-				break;
-			case 0x02:
-				if (pData[2] == 0x01) {
-					mbedtls_aes_init(&aes);
-					mbedtls_aes_setkey_enc(&aes, (auth_key + 2), 128);
-					mbedtls_aes_crypt_ecb(&aes, MBEDTLS_AES_ENCRYPT, pData + 3, encrypted_num + 2);
-					mbedtls_aes_free(&aes);
-					auth_flag = send_encrypted_number;
-				} else {
-					auth_flag = auth_failed;
-				}
-				break;
-			case 0x03:
-				if (pData[2] == 0x01) {
-					auth_flag = auth_success;
-				}
-				else if (pData[2] == 0x04) {
-					auth_flag = send_key;
-				}
-				break;
-			default:
-				auth_flag = auth_failed;
-		}
-	}
-
-	static void notifyCallback_heartrate(BLERemoteCharacteristic* pHRMMeasureCharacteristic, uint8_t* pData, size_t length, bool isNotify) {
-		Serial.printf("Get Heart Rate: ");
-		Serial.printf("%d\n", pData[1]);
-	}
 };
