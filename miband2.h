@@ -20,6 +20,9 @@ static uint8_t			auth_key[18];
 static uint8_t			_send_rnd_cmd[2] = {0x02, 0x00};
 static uint8_t			none[2] = {0, 0};
 
+static uint8_t			n_dev = 0;
+static bool				isWaiting = false;
+
 static void notifyCallback_auth(BLERemoteCharacteristic* pBLERemoteCharacteristic, uint8_t* pData, size_t length, bool isNotify) {
 	switch (pData[1]) {
 		case 0x01:
@@ -57,6 +60,7 @@ static void notifyCallback_auth(BLERemoteCharacteristic* pBLERemoteCharacteristi
 static void notifyCallback_heartrate(BLERemoteCharacteristic* pHRMMeasureCharacteristic, uint8_t* pData, size_t length, bool isNotify) {
 	Serial.printf("Get Heart Rate: ");
 	Serial.printf("%d\n", pData[1]);
+	isWaiting = false;
 }
 
 class DeviceSearcher: public BLEAdvertisedDeviceCallbacks {
@@ -89,7 +93,6 @@ private:
 	BLEAddress		* pServerAddress;
 };
 
-
 class MiBand2 {
 public:
 	MiBand2(std::string addr, const uint8_t * key, const char * devName) {
@@ -99,6 +102,10 @@ public:
 	}
 	
 	~MiBand2() {}
+	
+	std::string getName() {
+		return dev_name;
+	}
 	
 	bool scan4Device(uint8_t timeout) {
 		DeviceSearcher * ds = new DeviceSearcher();
@@ -152,10 +159,9 @@ public:
 		// ====================================================================
 
 		// ====================================================================
-		// Bind notification
+		// Bind notification (AUTH)
 		// --------------------------------------------------------------------
 		pRemoteCharacteristic->registerForNotify(notifyCallback_auth);
-		pHRMMeasureCharacteristic->registerForNotify(notifyCallback_heartrate);
 		// ====================================================================
 		return true;
 	}
@@ -198,23 +204,30 @@ public:
 		Serial.println("# Auth succeed.");
 	}
 	
-	void sendCmd() {
-		cccd_hrm->writeValue(HRM_NOTIFICATION, 2, true);
-		pHRMControlCharacteristic->writeValue(HRM_CONTINUOUS_STOP, 3, true);
-		pHRMControlCharacteristic->writeValue(HRM_CONTINUOUS_START, 3, true);
+	void request4HRM() {
+		if (!isWaiting) {
+			Serial.println("# REQ sending...");
+			isWaiting = true;
+			pHRMMeasureCharacteristic->registerForNotify(notifyCallback_heartrate);
+			pHRMControlCharacteristic->writeValue(HRM_ONESHOT_STOP, 3, true);
+			pHRMControlCharacteristic->writeValue(HRM_ONESHOT_START, 3, true);
+			Serial.println("# REQ sent.");
+		}
 	}
 	
-	void run(uint8_t timeout) {
+	bool init(uint8_t timeout) {
 		if (!scan4Device(timeout)) {
 			Serial.println("Device not found");
-			return;
+			return false;
 		}
 		Serial.println("Connceting to services...");
 		connect2Server(*pServerAddress);
 		authStart();
-		sendCmd();
+		cccd_hrm->writeValue(HRM_NOTIFICATION, 2, true);
+		n_dev++;
+		return true;
 	}
-	
+
 private:
 	bool					f_found = false;
 	bool					f_connected = false;
