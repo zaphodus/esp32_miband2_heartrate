@@ -3,6 +3,7 @@
 #include "HardwareSerial.h"
 #include "mbedtls/aes.h"
 #include "uuid.h"
+#include "utilize.h"
 
 enum authentication_flags {
 	send_key = 0,
@@ -12,8 +13,19 @@ enum authentication_flags {
 	waiting = 4
 };
 
+enum dflag {
+	error = -1,
+	idle = 0,
+	scanning = 1,
+	connecting2Dev = 2,
+	connecting2Serv = 3,
+	established = 4,
+	waiting4data = 5
+};
+
 authentication_flags	auth_flag;
 mbedtls_aes_context		aes;
+dflag					status = idle;
 
 static uint8_t			encrypted_num[18] = {0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
 static uint8_t			auth_key[18];
@@ -55,8 +67,13 @@ static void notifyCallback_auth(BLERemoteCharacteristic* pBLERemoteCharacteristi
 }
 
 static void notifyCallback_heartrate(BLERemoteCharacteristic* pHRMMeasureCharacteristic, uint8_t* pData, size_t length, bool isNotify) {
+	status = idle;
 	Serial.printf("Get Heart Rate: ");
 	Serial.printf("%d\n", pData[1]);
+	M5.Lcd.setCursor(200, 150);
+	M5.Lcd.setTextSize(5);
+	M5.Lcd.setTextColor(WHITE, BLUE);
+	M5.Lcd.println(pData[1]);
 }
 
 class DeviceSearcher: public BLEAdvertisedDeviceCallbacks {
@@ -92,19 +109,20 @@ private:
 
 class MiBand2 {
 public:
-	MiBand2(std::string addr, const uint8_t * key, const char * devName) {
+	MiBand2(std::string addr, const uint8_t * key) {
 		dev_addr = addr;
-		dev_name = devName;
 		memcpy(auth_key, key, 18);
 	}
 	
-	~MiBand2() {}
+	~MiBand2() {
+		pClient->disconnect();
+		log2("# Operation finished.");
+	}
 	
 	bool scan4Device(uint8_t timeout) {
 		DeviceSearcher * ds = new DeviceSearcher();
 		ds->setDevAddr(dev_addr);
 		
-		BLEDevice::init("");
 		BLEScan* pBLEScan = BLEDevice::getScan();
 		pBLEScan->setAdvertisedDeviceCallbacks(ds);
 		pBLEScan->setActiveScan(true);
@@ -114,14 +132,14 @@ public:
 			return false;
 		} else {
 			pServerAddress = ds->getServAddr();
+			pClient = BLEDevice::createClient();
 			return true;
 		}
 	}
 	
 	bool connect2Server(BLEAddress pAddress) {
-		BLEClient * pClient = BLEDevice::createClient();
 		pClient->connect(pAddress);
-		Serial.println("Connected to the device.");
+		log2("Connected to the device.");
 		
 		// ====================================================================
 		// Get useful s/c/d of MI BAND 2
@@ -129,25 +147,25 @@ public:
 		BLERemoteService * pRemoteService = pClient->getService(service2_uuid);
 		if (pRemoteService == nullptr)
 			return false;
-		M5.Lcd.println(dev_name.c_str());
+		log2("MIBAND2");
 		pRemoteCharacteristic = pRemoteService->getCharacteristic(auth_characteristic_uuid);
-		M5.Lcd.println(" |- CHAR_AUTH");
+		log2(" |- CHAR_AUTH");
 		if (pRemoteCharacteristic == nullptr)
 			return false;
 		
 		pRemoteService = pClient->getService(alert_sev_uuid);
-		M5.Lcd.println("SVC_ALERT");
+		log2("SVC_ALERT");
 		pAlertCharacteristic = pRemoteService->getCharacteristic(alert_cha_uuid);
-		M5.Lcd.println(" |- CHAR_ALERT");
+		log2(" |- CHAR_ALERT");
 		
 		pRemoteService = pClient->getService(heart_rate_sev_uuid);
-		M5.Lcd.println("SVC_HEART_RATE");
+		log2("SVC_HEART_RATE");
 		pHRMControlCharacteristic = pRemoteService->getCharacteristic(UUID_CHAR_HRM_CONTROL);
-		M5.Lcd.println(" |- UUID_CHAR_HRM_CONTROL");
+		log2(" |- UUID_CHAR_HRM_CONTROL");
 		pHRMMeasureCharacteristic = pRemoteService->getCharacteristic(UUID_CHAR_HRM_MEASURE);
-		M5.Lcd.println(" |- CHAR_HRM_MEASURE");
+		log2(" |- CHAR_HRM_MEASURE");
 		cccd_hrm = pHRMMeasureCharacteristic->getDescriptor(CCCD_UUID);
-		M5.Lcd.println("   |- CCCD_HRM");
+		log2("   |- CCCD_HRM");
 		f_connected = true;
 		// ====================================================================
 
@@ -164,7 +182,7 @@ public:
 		auth_flag = require_random_number;
 		BLERemoteDescriptor* pauth_descripter;
 		pauth_descripter = pRemoteCharacteristic->getDescriptor(BLEUUID((uint16_t)0x2902));
-		M5.Lcd.println("   |- CCCD_AUTH");
+		log2("   |- CCCD_AUTH");
 		pauth_descripter->writeValue(auth_key, 2, true);
 		Serial.println("# Sent {0x01, 0x00} to CCCD_AUTH");
 		while (auth_flag != auth_success) {
@@ -195,24 +213,51 @@ public:
 		pauth_descripter->writeValue(none, 2, true);
 		Serial.println("# Sent NULL to CCCD_AUTH. AUTH process finished.");
 		while (!f_connected && (auth_flag == auth_success));
-		Serial.println("# Auth succeed.");
+		log2("# Auth succeed.");
+		cccd_hrm->writeValue(HRM_NOTIFICATION, 2, true);
+		log2("# Listening on the HRM_NOTIFICATION.");
 	}
 	
-	void sendCmd() {
-		cccd_hrm->writeValue(HRM_NOTIFICATION, 2, true);
+	void startHRM() {
+		Serial.println("# Sending HRM command...");
 		pHRMControlCharacteristic->writeValue(HRM_CONTINUOUS_STOP, 3, true);
 		pHRMControlCharacteristic->writeValue(HRM_CONTINUOUS_START, 3, true);
+		Serial.println("# Sent.");
 	}
 	
-	void run(uint8_t timeout) {
+	void startHRM_oneshot() {
+		if (status != waiting4data) {
+			Serial.println("# Sending HRM-OS command...");
+			pHRMControlCharacteristic->writeValue(HRM_ONESHOT_STOP, 3, true);
+			pHRMControlCharacteristic->writeValue(HRM_ONESHOT_START, 3, true);
+			Serial.println("# Sent.");
+			status = waiting4data;
+		} else {
+			delay(20);
+		}
+	}
+	
+	void init(uint8_t timeout) {
+		log2(dev_addr);
+		log2("Scanning for device...");
 		if (!scan4Device(timeout)) {
-			Serial.println("Device not found");
+			log2("Device not found");
 			return;
 		}
-		Serial.println("Connceting to services...");
-		connect2Server(*pServerAddress);
+
+		log2("Connceting to services...");
+		if (!connect2Server(*pServerAddress)) {
+			log2("! Failed to connect to services");
+			return;
+		}
 		authStart();
-		sendCmd();
+		status = established;
+
+	}
+	
+	void deinit() {
+		pClient->disconnect();
+		log2("# Operation finished.");
 	}
 	
 private:
@@ -220,7 +265,7 @@ private:
 	bool					f_connected = false;
 
 	std::string				dev_addr;
-	std::string				dev_name;
+	BLEClient				* pClient;
 	BLEAddress				* pServerAddress;
 	BLERemoteCharacteristic	* pRemoteCharacteristic;
 	BLERemoteCharacteristic	* pAlertCharacteristic;
