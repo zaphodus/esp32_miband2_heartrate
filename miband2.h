@@ -1,9 +1,10 @@
-#include <M5Stack.h>
 #include "BLEDevice.h"
 #include "HardwareSerial.h"
 #include "mbedtls/aes.h"
 #include "uuid.h"
 #include "utilize.h"
+
+#define LED_PIN 22
 
 enum authentication_flags {
 	send_key = 0,
@@ -68,12 +69,9 @@ static void notifyCallback_auth(BLERemoteCharacteristic* pBLERemoteCharacteristi
 
 static void notifyCallback_heartrate(BLERemoteCharacteristic* pHRMMeasureCharacteristic, uint8_t* pData, size_t length, bool isNotify) {
 	status = idle;
+	led_blink(LED_PIN, 500, 3);
 	Serial.printf("Get Heart Rate: ");
 	Serial.printf("%d\n", pData[1]);
-	M5.Lcd.setCursor(200, 150);
-	M5.Lcd.setTextSize(5);
-	M5.Lcd.setTextColor(WHITE, BLUE);
-	M5.Lcd.println(pData[1]);
 }
 
 class DeviceSearcher: public BLEAdvertisedDeviceCallbacks {
@@ -85,7 +83,6 @@ public:
 	void onResult (BLEAdvertisedDevice advertisedDevice) {
 		std::string addr_now = advertisedDevice.getAddress().toString();
 		if (addr_now.compare(target_addr) == 0) {
-			M5.Lcd.printf("Target found: %s\n", addr_now.c_str());
 			pServerAddress = new BLEAddress(advertisedDevice.getAddress());
 			advertisedDevice.getScan()->stop();
 			f_found = true;
@@ -139,6 +136,7 @@ public:
 	
 	bool connect2Server(BLEAddress pAddress) {
 		pClient->connect(pAddress);
+		led_blink(LED_PIN, 100, 5);
 		log2("Connected to the device.");
 		
 		// ====================================================================
@@ -245,6 +243,9 @@ public:
 			return;
 		}
 
+		led_blink(LED_PIN, 100, 5);
+
+		log2("Device found");
 		log2("Connceting to services...");
 		if (!connect2Server(*pServerAddress)) {
 			log2("! Failed to connect to services");
