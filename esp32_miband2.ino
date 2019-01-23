@@ -10,9 +10,17 @@ MiBand2 dev(MI_LAB, _KEY);
 bool start = false;
 
 void setup() {
+	pinMode(LED_PIN, OUTPUT);
+	pinMode(22, OUTPUT);
+	pinMode(SW_PIN, INPUT);
+	
+	digitalWrite(LED_PIN, 0);
+	digitalWrite(22, 1);
 	
 	Serial.begin(115200);
-
+	log2("Waiting for start...");
+	wait4switch(SW_PIN);
+	led_blink(LED_PIN, 20, 1);
 	BLEDevice::init("ESP-WROOM-32");
 	dev.init(30);
 	start = true;
