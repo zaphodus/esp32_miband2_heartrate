@@ -5,6 +5,8 @@
 #include "uuid.h"
 #include "utilize.h"
 
+char		fname[64];
+
 enum authentication_flags {
 	send_key = 0,
 	require_random_number = 1,
@@ -74,6 +76,10 @@ static void notifyCallback_heartrate(BLERemoteCharacteristic* pHRMMeasureCharact
 	M5.Lcd.setTextSize(5);
 	M5.Lcd.setTextColor(WHITE, BLUE);
 	M5.Lcd.println(pData[1]);
+	
+	char hrm_info[32];
+	sprintf(hrm_info, "%d,%d\n", millis()/1000, pData[1]);
+	writeOut(fname, hrm_info, FILE_APPEND);
 }
 
 class DeviceSearcher: public BLEAdvertisedDeviceCallbacks {

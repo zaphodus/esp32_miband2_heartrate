@@ -6,7 +6,8 @@ const std::string MI_LAB = "f7:f3:ef:13:b1:3d";
 uint8_t _KEY [18] =  {0x01, 0x00, 0x82, 0xb6, 0x5c, 0xd9, 0x91, 0x95, 0x9a, 0x72, 0xe5, 0xcc, 0xb7, 0xaf, 0x62, 0x33, 0xee, 0x35};
 
 MiBand2 dev(MI_LAB, _KEY);
-bool start = false;
+bool		start		= false;
+bool		f_isSD		= false;
 
 void setup() {
 	M5.begin();
@@ -17,15 +18,17 @@ void setup() {
 
 	M5.Lcd.setCursor(0, 0);
 	
+	if (!mountSD()) {
+		M5.Lcd.println("SD card is not found");
+	} else {
+		f_isSD = true;
+		fileNameGen(fname, "/MIBAND2", "MB");
+		M5.lcd.print("New file name: ");M5.lcd.println(fname);
+	}
+	
 	log2("Press A to start");
 
-	while (1) {
-		M5.update();
-		if (M5.BtnA.wasPressed()) {
-			break;
-		}
-		delay(20);
-	}
+	wait4ButtonA();
 
 	BLEDevice::init("M5Stack");
 	dev.init(30);
