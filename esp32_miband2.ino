@@ -14,7 +14,7 @@ static uint8_t	_send_rnd_cmd[2] =	{0x02, 0x00};
 static uint8_t	auth_key[18];
 static uint8_t	none[2] = {0, 0};
 
-bool		f_start		= false;
+uint8_t		f_start		= 0;
 bool		f_isSD		= false;
 char		fname[64];
 
@@ -40,6 +40,11 @@ authentication_flags	auth_flag;
 mbedtls_aes_context		aes;
 dflag					status = idle;
 
+// *********************************
+// ********* W A R N I N G *********
+// If you do not know what this part means, DO NOT MODIFY IT !!!
+// *********************************
+// *********************************
 static void notifyCallback_auth(BLERemoteCharacteristic* pBLERemoteCharacteristic, uint8_t* pData, size_t length, bool isNotify) {
 	switch (pData[1]) {
 		case 0x01:
@@ -78,10 +83,10 @@ static void notifyCallback_heartrate(BLERemoteCharacteristic* pHRMMeasureCharact
 	status = idle;
 	Serial.printf("Get Heart Rate: ");
 	Serial.printf("%d\n", pData[1]);
-	M5.Lcd.setCursor(200, 150);
-	M5.Lcd.setTextSize(5);
-	M5.Lcd.setTextColor(WHITE, BLUE);
-	M5.Lcd.println(pData[1]);
+	// M5.Lcd.setCursor(200, 150);
+	// M5.Lcd.setTextSize(5);
+	// M5.Lcd.setTextColor(WHITE, BLUE);
+	// M5.Lcd.println(pData[1]);
 	
 	char hrm_info[32];
 	sprintf(hrm_info, "%d,%d\n", millis()/1000, pData[1]);
@@ -247,6 +252,11 @@ public:
 			delay(20);
 		}
 	}
+
+	void hrm_heartbeat() {
+		pHRMControlCharacteristic->writeValue(HRM_HEARTBEAT, 1, true);
+		Serial.println("# Heart beat packet sent.");
+	}
 	
 	void init(uint8_t timeout) {
 		log2(dev_addr);
@@ -267,6 +277,8 @@ public:
 	}
 	
 	void deinit() {
+		pHRMControlCharacteristic->writeValue(HRM_CONTINUOUS_STOP, 3, true);
+		pHRMControlCharacteristic->writeValue(HRM_ONESHOT_STOP, 3, true);
 		pClient->disconnect();
 		log2("# Operation finished.");
 	}
@@ -284,6 +296,9 @@ private:
 	BLERemoteCharacteristic	* pHRMControlCharacteristic;
 	BLERemoteDescriptor		* cccd_hrm;
 };
+// *********************************
+// *********************************
+// *********************************
 
 MiBand2 dev(MI_LAB, _KEY);
 
@@ -296,6 +311,7 @@ void setup() {
 
 	M5.Lcd.setCursor(0, 0);
 	
+	// v----- DEBUG -----v
 	if (!mountSD()) {
 		M5.Lcd.println("SD card is not found");
 	} else {
@@ -303,22 +319,53 @@ void setup() {
 		fileNameGen(fname, "/MIBAND2", "MB");
 		M5.lcd.print("New file name: ");M5.lcd.println(fname);
 	}
-	
-	log2("Press A to start");
+	// ^----- DEBUG -----^
 
-	wait4ButtonA();
+	log2("Press A to start one-shot");
+	log2("Press B to start continuous");
+
+	while (1) {
+		M5.update();
+		if (M5.BtnA.wasPressed()) {
+			f_start = 1;
+			log2("One-shot mode loading...");
+			break;
+		} else if (M5.BtnB.wasPressed()) {
+			f_start = 2;
+			log2("Continuous mode loading...");
+			break;
+		}
+		delay(20);
+	}
 
 	BLEDevice::init("M5Stack");
 	dev.init(30);
-	f_start = true;
 }
 
+bool		f_hrmc = false;
+uint32_t	t_start, t_now;
+
 void loop() {
-	if (f_start) {
+	M5.lcd.setBrightness(0);
+	if (f_start == 1) {
 		dev.startHRM_oneshot();
+	} else if (f_start == 2) {
+		if (!f_hrmc) {
+			dev.startHRM();
+			f_hrmc = true;
+			t_start = millis();
+		} else {
+			t_now = millis();
+			if (t_now - t_start >= 12000) {
+				dev.hrm_heartbeat();
+				t_start = t_now;
+			}
+		}
 	}
 	M5.update();
 	if (M5.BtnC.wasPressed()) {
+		M5.lcd.setBrightness(100);
+		f_start = 0;
 		M5.Lcd.setTextSize(1);
 		dev.deinit();
 		delay(3000);
