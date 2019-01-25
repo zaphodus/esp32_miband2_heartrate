@@ -349,9 +349,11 @@ void loop() {
 	M5.lcd.setBrightness(0);
 	if (f_start == 1) {
 		dev.startHRM_oneshot();
+		delay(4000);
 	} else if (f_start == 2) {
 		if (!f_hrmc) {
 			dev.startHRM();
+			delay(1000);
 			f_hrmc = true;
 			t_start = millis();
 		} else {

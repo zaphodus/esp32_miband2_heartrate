@@ -1,5 +1,3 @@
-#include <M5Stack.h>
-
 void log2(std::string s) {
 	M5.lcd.println(s.c_str());
 	Serial.println(s.c_str());
@@ -49,37 +47,4 @@ void fileNameGen(char * container, const char * folder, const char * front)
 		}
 	}
 	M5.lcd.println(container);
-}
-
-void wait4ButtonA()
-{
-	while (1) {
-		M5.update();
-		if (M5.BtnA.wasPressed()) {
-			break;
-		}
-		delay(20);
-	}
-}
-
-void wait4ButtonB()
-{
-	while (1) {
-		M5.update();
-		if (M5.BtnB.wasPressed()) {
-			break;
-		}
-		delay(20);
-	}
-}
-
-void wait4ButtonC()
-{
-	while (1) {
-		M5.update();
-		if (M5.BtnC.wasPressed()) {
-			break;
-		}
-		delay(20);
-	}
 }
