@@ -10,7 +10,6 @@
 #define SW_PIN_2 15
 
 const std::string MI_LAB = "f7:f3:ef:13:b1:3d";
-HardwareSerial XBee(1);
 
 // Once the KEY is changed, MI Band 2 will see your device as a new client
 static uint8_t	_KEY [18] =			{0x01, 0x00, 0x82, 0xb6, 0x5c, 0xd9, 0x91, 0x95, 0x9a, 0x72, 0xe5, 0xcc, 0xb7, 0xaf, 0x62, 0x33, 0xee, 0x35};
@@ -89,10 +88,12 @@ static void notifyCallback_heartrate(BLERemoteCharacteristic* pHRMMeasureCharact
 	Serial.printf("Get Heart Rate: ");
 	Serial.printf("%d\n", pData[1]);
 	
-	led_blink(LED_B_PIN, 500, 1);
-	char hrm_info[32];
-	sprintf(hrm_info, "%d,%d\n", millis()/1000, pData[1]);
-	XBee.printf(hrm_info);
+	// v--- What do you want to do when the device gets the HRM data? ---v
+	// To do:
+	
+	
+	
+	// ^--- What do you want to do when the device gets the HRM data? ---^
 }
 
 class DeviceSearcher: public BLEAdvertisedDeviceCallbacks {
@@ -315,9 +316,6 @@ void setup() {
 	digitalWrite(LED_R_PIN, 1);
 	
 	Serial.begin(115200);
-	XBee.begin(115200, SERIAL_8N1, 16, 17);
-	
-	XBee.println("Xbee connection test passed.");
 	/*
 	// v----- DEBUG -----v
 	if (!mountSD()) {
