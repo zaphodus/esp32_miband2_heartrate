@@ -6,16 +6,26 @@
 #include "utilize.h"
 
 #define LED_B_PIN 22
-#define LED_R_PIN 23
 #define SW_PIN_1 4
 #define SW_PIN_2 15
 
 const std::string MI_LAB = "f7:f3:ef:13:b1:3d";
+const char * dev_name = "MiBand2";
 
 HardwareSerial XBeeSerial(1);
 XBee xbee = XBee();
-uint8_t hrt[1];
-XBeeAddress64 addr64 = XBeeAddress64(0x0013a200, 0x40d757b6);
+XBeeAddress64 ntrAddr64;
+
+// v--- For ATCommand ---v
+uint8_t dlCmd[] = {'D','L'};
+uint8_t slCmd[] = {'S','L'};
+AtCommandRequest atRequest;
+AtCommandResponse atResponse;
+uint8_t rtadl[4];
+uint32_t rtAddressL = 0;
+uint8_t ntradl[4];
+uint32_t ntrAddressL = 0;
+// ^--- For ATCommand ---^
 
 
 // Once the KEY is changed, MI Band 2 will see your device as a new client
@@ -26,8 +36,15 @@ static uint8_t	auth_key[18];
 static uint8_t	none[2] = {0, 0};
 
 uint8_t		f_start		= 0;
+bool		f_hrm		= false;
 bool		f_isSD		= false;
-char		fname[64];
+bool		f_hrmc		= false;
+uint8_t		hrm			= 0xff;
+uint8_t		crash_ctr	= 0;
+uint16_t	ctr			= 0;
+uint16_t	watchdog_to	= 10000;
+uint32_t	t_start, t_now;
+
 
 enum authentication_flags {
 	send_key = 0,
@@ -51,11 +68,35 @@ authentication_flags	auth_flag;
 mbedtls_aes_context		aes;
 dflag					status = idle;
 
+void crash() {
+	log2("GOOD NIGHT");
+	char * s;
+	sprintf(s, "GOODNIGHT");
+}
+
+void watchdog (void *parameter)
+{
+	while (1) {
+		delay(watchdog_to);
+		if (crash_ctr == 0) {
+			char crash_info[] = "Device lost...";
+			Serial.println(crash_info);
+			ZBTxRequest zbTx = ZBTxRequest(ntrAddr64, (uint8_t *)crash_info, strlen(crash_info));
+			xbee.send(zbTx);
+			crash();
+		} else {
+			crash_ctr = 0;
+		}
+	}
+}
+
+
 // *********************************
 // ********* W A R N I N G *********
-// If you do not know what this part means, DO NOT MODIFY IT !!!
+// YOU'D BETTER NOT TOUCH HERE !!
 // *********************************
-// *********************************
+// vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
+
 static void notifyCallback_auth(BLERemoteCharacteristic* pBLERemoteCharacteristic, uint8_t* pData, size_t length, bool isNotify) {
 	switch (pData[1]) {
 		case 0x01:
@@ -92,21 +133,57 @@ static void notifyCallback_auth(BLERemoteCharacteristic* pBLERemoteCharacteristi
 
 static void notifyCallback_heartrate(BLERemoteCharacteristic* pHRMMeasureCharacteristic, uint8_t* pData, size_t length, bool isNotify) {
 	status = idle;
+	hrm = pData[1];
 	Serial.printf("Get Heart Rate: ");
 	Serial.printf("%d\n", pData[1]);
-	
 	led_blink(LED_B_PIN, 500, 1);
-	//char hrm_info[32];
-	//sprintf(hrm_info, "%d,%d\n", millis()/1000, pData[1]);
-	//XBee.printf(hrm_info);
-
-  hrt[0] = pData[1];
-  ZBTxRequest zbTx = ZBTxRequest(addr64, hrt, 1);
-
-  xbee.send(zbTx);
-
-  
+	sendHRM2Xbee();
+	crash_ctr++;
 }
+
+
+void sendHRM2Xbee() {
+	char hrm_info[32];
+	sprintf(hrm_info, "%s,%d,%d", dev_name, ctr++, hrm);
+	log2(hrm_info);
+	ZBTxRequest zbTx = ZBTxRequest(ntrAddr64, (uint8_t *)hrm_info, strlen(hrm_info));
+	xbee.send(zbTx);
+}
+
+
+void sendAtCommand_ADR(uint8_t content[4]) {
+	xbee.send(atRequest);
+	if (xbee.readPacket(5000)) {
+		if (xbee.getResponse().getApiId() == AT_COMMAND_RESPONSE) {
+			xbee.getResponse().getAtCommandResponse(atResponse);
+			if (atResponse.isOk()) {
+				if (atResponse.getValueLength() > 0) {
+					for (int i = 0; i < atResponse.getValueLength(); i++) {
+						content[i] = atResponse.getValue()[i];
+					}
+				}       
+			}   
+		}
+	}
+}
+
+// Get router 64 low address (AT command: SL)
+void getRT64adl () {
+	atRequest.setCommand(slCmd);
+	sendAtCommand_ADR(rtadl);
+	atRequest.clearCommandValue();
+	rtAddressL = rtadl[0]<<24 | rtadl[1]<<16 | rtadl[2]<<8 | rtadl[3];
+}
+
+
+// Get coordinator 64 low address (AT command: DL)
+void getNTR64adl () {
+	atRequest.setCommand(dlCmd);
+	sendAtCommand_ADR(ntradl);
+	atRequest.clearCommandValue();
+	ntrAddressL = ntradl[0]<<24 | ntradl[1]<<16 | ntradl[2]<<8 | ntradl[3];
+}
+
 
 class DeviceSearcher: public BLEAdvertisedDeviceCallbacks {
 public:
@@ -289,7 +366,6 @@ public:
 		led_blink(LED_B_PIN, 100, 5);
 		authStart();
 		status = established;
-
 	}
 	
 	void deinit() {
@@ -312,36 +388,42 @@ private:
 	BLERemoteCharacteristic	* pHRMControlCharacteristic;
 	BLERemoteDescriptor		* cccd_hrm;
 };
+
+// ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+// ********* W A R N I N G *********
+// YOU'D BETTER NOT TOUCH HERE !!
 // *********************************
 // *********************************
-// *********************************
+
 
 MiBand2 dev(MI_LAB, _KEY);
 
 void setup() {
 	pinMode(LED_B_PIN, OUTPUT);
-	pinMode(LED_R_PIN, OUTPUT);
 	pinMode(SW_PIN_1, INPUT);
 	pinMode(SW_PIN_2, INPUT);
 	
 	digitalWrite(LED_B_PIN, 1);
-	digitalWrite(LED_R_PIN, 1);
 	
 	Serial.begin(115200);
 	XBeeSerial.begin(115200, SERIAL_8N1, 16, 17);
-  xbee.setSerial(XBeeSerial);
+	xbee.setSerial(XBeeSerial);
+	
+	while (rtAddressL==0||rtAddressL==ntrAddressL) {
+		delay(500);
+		Serial.println("Wait for RT");
+		getRT64adl();
+	}
+	
+	while (ntrAddressL==0||rtAddressL==ntrAddressL) {
+		delay(500);
+		Serial.println("Wait for NTR");
+		getNTR64adl();
+	}
+
+	ntrAddr64 = XBeeAddress64(0x0013a200, ntrAddressL);
 	
 	Serial.println("Xbee connection test passed.");
-	/*
-	// v----- DEBUG -----v
-	if (!mountSD()) {
-		log2("SD card is not found");
-	} else {
-		f_isSD = true;
-		fileNameGen(fname, "/MIBAND2", "MB");
-	}
-	// ^----- DEBUG -----^
-	*/
 
 	Serial.printf("Connect PIN%d to start one-shot\n", SW_PIN_1);
 	Serial.printf("Connect PIN%d to start one-shot\n", SW_PIN_2);
@@ -360,19 +442,28 @@ void setup() {
 	}
 	
 	digitalWrite(LED_B_PIN, 0);
-	led_blink(LED_R_PIN, 20, 1);
 	
+	xTaskCreate(
+		watchdog,
+		"genericTask",
+		10000,
+		NULL,
+		2,
+		NULL);
+
 	BLEDevice::init("ESP-WROOM-32");
 	dev.init(30);
+	crash_ctr++;
+	watchdog_to = 30000;
 }
 
-bool		f_hrmc = false;
-uint32_t	t_start, t_now;
 
 void loop() {
 	if (f_start == 1) {
 		dev.startHRM_oneshot();
-		delay(500);
+		delay(10000);
+	}
+	/*
 	} else if (f_start == 2) {
 		if (!f_hrmc) {
 			dev.startHRM();
@@ -387,6 +478,7 @@ void loop() {
 			}
 		}
 	}
+	*/
 	if (digitalRead(SW_PIN_1) && digitalRead(SW_PIN_2)) {
 		f_start = 0;
 		dev.deinit();
