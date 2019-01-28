@@ -1,0 +1,1 @@
+I have no method to let an esp32 device connect more than 1 MiBands
