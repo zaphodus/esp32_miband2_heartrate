@@ -92,8 +92,8 @@ void watchdog (void *parameter)
 			digitalWrite(XBEE_SLEEP, 0);
 			delay(50);
 			char crash_info[32];
-			sprintf(crash_info, "-1\r\n");
-			Serial.println(crash_info);
+			sprintf(crash_info, "%d,-1\r\n", ctr++);
+			// Serial.println(crash_info);
 			ZBTxRequest zbTx = ZBTxRequest(ntrAddr64, (uint8_t *)crash_info, strlen(crash_info));
 			xbee.send(zbTx);
 			digitalWrite(XBEE_SLEEP, 1);
@@ -150,8 +150,8 @@ static void notifyCallback_auth(BLERemoteCharacteristic* pBLERemoteCharacteristi
 static void notifyCallback_heartrate(BLERemoteCharacteristic* pHRMMeasureCharacteristic, uint8_t* pData, size_t length, bool isNotify) {
 	status = idle;
 	hrm = pData[1];
-	Serial.printf("Get Heart Rate: ");
-	Serial.printf("%d\n", pData[1]);
+	// Serial.printf("Get Heart Rate: ");
+	// Serial.printf("%d\n", pData[1]);
 	led_blink(LED_B_PIN, 500, 1);
 	sendHRM2Xbee();
 	crash_ctr++;
@@ -162,7 +162,7 @@ void sendHRM2Xbee() {
 	digitalWrite(XBEE_SLEEP, 0);
 	delay(50);
 	char hrm_info[32];
-	sprintf(hrm_info, "%d\r\n", hrm);
+	sprintf(hrm_info, "%d,%d\r\n", ctr++, hrm);
 	log2(hrm_info);
 	ZBTxRequest zbTx = ZBTxRequest(ntrAddr64, (uint8_t *)hrm_info, strlen(hrm_info));
 	xbee.send(zbTx);
@@ -312,23 +312,23 @@ public:
 		pauth_descripter = pRemoteCharacteristic->getDescriptor(BLEUUID((uint16_t)0x2902));
 		log2("   |- CCCD_AUTH");
 		pauth_descripter->writeValue(auth_key, 2, true);
-		Serial.println("# Sent {0x01, 0x00} to CCCD_AUTH");
+		// Serial.println("# Sent {0x01, 0x00} to CCCD_AUTH");
 		while (auth_flag != auth_success) {
-			Serial.printf("# AUTH_FLAG: %d\n", auth_flag);
+			// Serial.printf("# AUTH_FLAG: %d\n", auth_flag);
 			authentication_flags seaved_flag = auth_flag;
 			auth_flag = waiting;
 			switch (seaved_flag) {
 				case send_key:
 					pRemoteCharacteristic->writeValue(auth_key, 18);
-					Serial.println("# Sent KEY to CCCD_AUTH");
+					// Serial.println("# Sent KEY to CCCD_AUTH");
 					break;
 				case require_random_number:
 					pRemoteCharacteristic->writeValue(_send_rnd_cmd, 2);
-					Serial.println("# Sent RND_CMD to CCCD_AUTH");
+					// Serial.println("# Sent RND_CMD to CCCD_AUTH");
 					break;
 				case send_encrypted_number:
 					pRemoteCharacteristic->writeValue(encrypted_num, 18);
-					Serial.println("# Sent ENCRYPTED_NUM to CCCD_AUTH");
+					// Serial.println("# Sent ENCRYPTED_NUM to CCCD_AUTH");
 					break;
 				default:
 				;
@@ -339,7 +339,7 @@ public:
 			delay(100);
 		}
 		pauth_descripter->writeValue(none, 2, true);
-		Serial.println("# Sent NULL to CCCD_AUTH. AUTH process finished.");
+		// Serial.println("# Sent NULL to CCCD_AUTH. AUTH process finished.");
 		while (!f_connected && (auth_flag == auth_success));
 		log2("# Auth succeed.");
 		cccd_hrm->writeValue(HRM_NOTIFICATION, 2, true);
@@ -347,18 +347,18 @@ public:
 	}
 	
 	void startHRM() {
-		Serial.println("# Sending HRM command...");
+		// Serial.println("# Sending HRM command...");
 		pHRMControlCharacteristic->writeValue(HRM_CONTINUOUS_STOP, 3, true);
 		pHRMControlCharacteristic->writeValue(HRM_CONTINUOUS_START, 3, true);
-		Serial.println("# Sent.");
+		// Serial.println("# Sent.");
 	}
 	
 	void startHRM_oneshot() {
 		if (status != waiting4data) {
-			Serial.println("# Sending HRM-OS command...");
+			// Serial.println("# Sending HRM-OS command...");
 			pHRMControlCharacteristic->writeValue(HRM_ONESHOT_STOP, 3, true);
 			pHRMControlCharacteristic->writeValue(HRM_ONESHOT_START, 3, true);
-			Serial.println("# Sent.");
+			// Serial.println("# Sent.");
 			status = waiting4data;
 		} else {
 			delay(20);
@@ -367,7 +367,7 @@ public:
 
 	void hrm_heartbeat() {
 		pHRMControlCharacteristic->writeValue(HRM_HEARTBEAT, 1, true);
-		Serial.println("# Heart beat packet sent.");
+		// Serial.println("# Heart beat packet sent.");
 	}
 	
 	void init(uint8_t timeout) {
@@ -427,30 +427,30 @@ void setup() {
 	
 	digitalWrite(LED_B_PIN, 1);
 	
-	Serial.begin(115200);
-	XBeeSerial.begin(115200, SERIAL_8N1, 16, 17);
+	// Serial.begin(115200);
+	XBeeSerial.begin(115200, SERIAL_8N1, 3, 1);
 	xbee.setSerial(XBeeSerial);
 	digitalWrite(XBEE_SLEEP, 0);
 	
 	// v--- Read address from config in XBee ---v
 	while (rtAddressL==0||rtAddressL==ntrAddressL) {
 		delay(500);
-		Serial.println("Wait for RT");
+		// Serial.println("Wait for RT");
 		getRT64adl();
 	}
 	while (ntrAddressL==0||rtAddressL==ntrAddressL) {
 		delay(500);
-		Serial.println("Wait for NTR");
+		// Serial.println("Wait for NTR");
 		getNTR64adl();
 	}
 	ntrAddr64 = XBeeAddress64(0x0013a200, ntrAddressL);
-	Serial.println("Xbee connection test passed.");
+	// Serial.println("Xbee connection test passed.");
 	digitalWrite(XBEE_SLEEP, 1);
 	
 	// ^--- Read address from config in XBee ---^
 
-	Serial.printf("Connect PIN%d to start one-shot\n", SW_PIN_1);
-	//Serial.printf("Connect PIN%d to start one-shot\n", SW_PIN_2);
+	// Serial.printf("Connect PIN%d to start one-shot\n", SW_PIN_1);
+	//// Serial.printf("Connect PIN%d to start one-shot\n", SW_PIN_2);
 
 	while (1) {
 		if (!digitalRead(SW_PIN_1)) {
