@@ -8,7 +8,7 @@
 
 #define LED_B_PIN	22		// Pin of LED
 #define SW_PIN_1	2		// Switch 1, connect GND to start one-shot mode
-#define XBEE_SLEEP	4		// Output to control the XBee's sleep
+#define XBEE_SLEEP	15		// Output to control the XBee's sleep
 // #define SW_PIN_2 15			// Switch 2, connect GND to start continuous mode
 
 const std::string MI_LAB	= "f7:f3:ef:13:b1:3d";	// MAC of the target band
@@ -89,11 +89,14 @@ void watchdog (void *parameter)
 	while (1) {
 		delay(watchdog_TO);
 		if (crash_ctr == 0) {
+			digitalWrite(XBEE_SLEEP, 0);
+			delay(50);
 			char crash_info[32];
-			sprintf(crash_info, "Rebooting... (%x)", error_code);
+			sprintf(crash_info, "-1\r\n");
 			Serial.println(crash_info);
 			ZBTxRequest zbTx = ZBTxRequest(ntrAddr64, (uint8_t *)crash_info, strlen(crash_info));
 			xbee.send(zbTx);
+			digitalWrite(XBEE_SLEEP, 1);
 			ESP.restart();
 		} else {
 			crash_ctr = 0;
@@ -156,11 +159,14 @@ static void notifyCallback_heartrate(BLERemoteCharacteristic* pHRMMeasureCharact
 
 
 void sendHRM2Xbee() {
+	digitalWrite(XBEE_SLEEP, 0);
+	delay(50);
 	char hrm_info[32];
-	sprintf(hrm_info, "%s,%d,%d", dev_name, ctr++, hrm);
+	sprintf(hrm_info, "%d\r\n", hrm);
 	log2(hrm_info);
 	ZBTxRequest zbTx = ZBTxRequest(ntrAddr64, (uint8_t *)hrm_info, strlen(hrm_info));
 	xbee.send(zbTx);
+	digitalWrite(XBEE_SLEEP, 1);
 }
 
 
@@ -415,6 +421,7 @@ MiBand2		dev(MI_LAB, _KEY);					// Instance of the band
 
 void setup() {
 	pinMode(LED_B_PIN, OUTPUT);
+	pinMode(XBEE_SLEEP, OUTPUT);
 	pinMode(SW_PIN_1, INPUT);
 	// pinMode(SW_PIN_2, INPUT);
 	
@@ -423,6 +430,7 @@ void setup() {
 	Serial.begin(115200);
 	XBeeSerial.begin(115200, SERIAL_8N1, 16, 17);
 	xbee.setSerial(XBeeSerial);
+	digitalWrite(XBEE_SLEEP, 0);
 	
 	// v--- Read address from config in XBee ---v
 	while (rtAddressL==0||rtAddressL==ntrAddressL) {
@@ -437,6 +445,8 @@ void setup() {
 	}
 	ntrAddr64 = XBeeAddress64(0x0013a200, ntrAddressL);
 	Serial.println("Xbee connection test passed.");
+	digitalWrite(XBEE_SLEEP, 1);
+	
 	// ^--- Read address from config in XBee ---^
 
 	Serial.printf("Connect PIN%d to start one-shot\n", SW_PIN_1);
