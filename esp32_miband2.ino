@@ -5,18 +5,22 @@
 #include "uuid.h"
 #include "utilize.h"
 
-#define LED_B_PIN 22
-#define SW_PIN_1 4
-#define SW_PIN_2 15
 
-const std::string MI_LAB = "f7:f3:ef:13:b1:3d";
-const char * dev_name = "MiBand2";
+#define LED_B_PIN	22		// Pin of LED
+#define SW_PIN_1	2		// Switch 1, connect GND to start one-shot mode
+#define XBEE_SLEEP	4		// Output to control the XBee's sleep
+// #define SW_PIN_2 15			// Switch 2, connect GND to start continuous mode
 
+const std::string MI_LAB	= "f7:f3:ef:13:b1:3d";	// MAC of the target band
+const char * dev_name		= "MiBand2";			// Name of the band, will be sent to XBee with HRM data and ctr
+
+
+// v--- Info of XBee ---v
 HardwareSerial XBeeSerial(1);
 XBee xbee = XBee();
 XBeeAddress64 ntrAddr64;
 
-// v--- For ATCommand ---v
+// AT Command
 uint8_t dlCmd[] = {'D','L'};
 uint8_t slCmd[] = {'S','L'};
 AtCommandRequest atRequest;
@@ -25,27 +29,38 @@ uint8_t rtadl[4];
 uint32_t rtAddressL = 0;
 uint8_t ntradl[4];
 uint32_t ntrAddressL = 0;
-// ^--- For ATCommand ---^
+// ^--- Info of XBee ---^
 
 
-// Once the KEY is changed, MI Band 2 will see your device as a new client
-static uint8_t	_KEY [18] =			{0x01, 0x00, 0x82, 0xb6, 0x5c, 0xd9, 0x91, 0x95, 0x9a, 0x72, 0xe5, 0xcc, 0xb7, 0xaf, 0x62, 0x33, 0xee, 0x35};
-static uint8_t	encrypted_num[18] =	{0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
-static uint8_t	_send_rnd_cmd[2] =	{0x02, 0x00};
+// v--- Commands of MiBand 2 ---v
+// For more information, please visit
+// https://github.com/creotiv/MiBand2
+// https://leojrfs.github.io/writing/miband2-part1-auth/
+// Once _KEY is changed, MiBand 2 will see your device as a new client
+static uint8_t	_KEY [18]			= {0x01, 0x00, 0x82, 0xb6, 0x5c, 0xd9, 0x91, 0x95, 0x9a, 0x72, 0xe5, 0xcc, 0xb7, 0xaf, 0x62, 0x33, 0xee, 0x35};
+static uint8_t	encrypted_num[18]	= {0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+static uint8_t	_send_rnd_cmd[2]	= {0x02, 0x00};
+static uint8_t	none[2]				= {0, 0};
 static uint8_t	auth_key[18];
-static uint8_t	none[2] = {0, 0};
-
-uint8_t		f_start		= 0;
-bool		f_hrm		= false;
-bool		f_isSD		= false;
-bool		f_hrmc		= false;
-uint8_t		hrm			= 0xff;
-uint8_t		crash_ctr	= 0;
-uint16_t	ctr			= 0;
-uint16_t	watchdog_to	= 10000;
-uint32_t	t_start, t_now;
+// ^--- Commands of MiBand 2 ---^
 
 
+// v--- Global variate ---v
+uint8_t		f_start					= 0xff;		// 1: one-shot; 2: continuous
+// bool		f_hrm					= false;	// A flag in continuous mode
+bool		f_hrmc					= false;	// Is continuous mode start
+// uint32_t	t_start, t_now;						// Time counter in continuous mode (heart beat packet every 16s)
+uint8_t		hrm						= 0xff;		// Heart rate data from the band
+uint16_t	ctr						= 0;		// Counter of HRM data
+uint8_t		error_code				= 0xff;		// 0x01: devide not found; 0x02: device lost
+uint8_t		crash_ctr				= 0;		// Use for the watchdog
+uint16_t	watchdog_TO;						// Time-out of watchdog
+// bool		f_isSD					= false;	// Abandoned since SD is not used
+// ^--- Global variate ---^
+
+
+// v--- Hard to explain ---v
+// But necessary and NOTHING CAN BE CHANGED
 enum authentication_flags {
 	send_key = 0,
 	require_random_number = 1,
@@ -53,7 +68,6 @@ enum authentication_flags {
 	auth_failed, auth_success = 3,
 	waiting = 4
 };
-
 enum dflag {
 	error = -1,
 	idle = 0,
@@ -63,37 +77,36 @@ enum dflag {
 	established = 4,
 	waiting4data = 5
 };
-
 authentication_flags	auth_flag;
 mbedtls_aes_context		aes;
 dflag					status = idle;
+// ^--- Hard to explain ---^
 
-void crash() {
-	log2("GOOD NIGHT");
-	char * s;
-	sprintf(s, "GOODNIGHT");
-}
 
+// v--- Watchdog run in Core 1 ---v
 void watchdog (void *parameter)
 {
 	while (1) {
-		delay(watchdog_to);
+		delay(watchdog_TO);
 		if (crash_ctr == 0) {
-			char crash_info[] = "Device lost...";
+			char crash_info[32];
+			sprintf(crash_info, "Rebooting... (%x)", error_code);
 			Serial.println(crash_info);
 			ZBTxRequest zbTx = ZBTxRequest(ntrAddr64, (uint8_t *)crash_info, strlen(crash_info));
 			xbee.send(zbTx);
-			crash();
+			ESP.restart();
 		} else {
 			crash_ctr = 0;
 		}
 	}
 }
+// ^--- Watchdog run in Core 1 ---^
 
 
 // *********************************
 // ********* W A R N I N G *********
-// YOU'D BETTER NOT TOUCH HERE !!
+// No one can explain the codes here,
+// YOU'D BETTER NOT TOUCH !!
 // *********************************
 // vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
 
@@ -167,6 +180,7 @@ void sendAtCommand_ADR(uint8_t content[4]) {
 	}
 }
 
+
 // Get router 64 low address (AT command: SL)
 void getRT64adl () {
 	atRequest.setCommand(slCmd);
@@ -213,6 +227,7 @@ private:
 	std::string		target_addr;
 	BLEAddress		* pServerAddress;
 };
+
 
 class MiBand2 {
 public:
@@ -376,8 +391,8 @@ public:
 	}
 	
 private:
-	bool					f_found = false;
-	bool					f_connected = false;
+	bool					f_found		= false;
+	bool					f_connected	= false;
 
 	std::string				dev_addr;
 	BLEClient				* pClient;
@@ -391,17 +406,17 @@ private:
 
 // ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 // ********* W A R N I N G *********
-// YOU'D BETTER NOT TOUCH HERE !!
+// No one can explain the codes here,
+// YOU'D BETTER NOT TOUCH !!
 // *********************************
 // *********************************
 
-
-MiBand2 dev(MI_LAB, _KEY);
+MiBand2		dev(MI_LAB, _KEY);					// Instance of the band
 
 void setup() {
 	pinMode(LED_B_PIN, OUTPUT);
 	pinMode(SW_PIN_1, INPUT);
-	pinMode(SW_PIN_2, INPUT);
+	// pinMode(SW_PIN_2, INPUT);
 	
 	digitalWrite(LED_B_PIN, 1);
 	
@@ -409,40 +424,43 @@ void setup() {
 	XBeeSerial.begin(115200, SERIAL_8N1, 16, 17);
 	xbee.setSerial(XBeeSerial);
 	
+	// v--- Read address from config in XBee ---v
 	while (rtAddressL==0||rtAddressL==ntrAddressL) {
 		delay(500);
 		Serial.println("Wait for RT");
 		getRT64adl();
 	}
-	
 	while (ntrAddressL==0||rtAddressL==ntrAddressL) {
 		delay(500);
 		Serial.println("Wait for NTR");
 		getNTR64adl();
 	}
-
 	ntrAddr64 = XBeeAddress64(0x0013a200, ntrAddressL);
-	
 	Serial.println("Xbee connection test passed.");
+	// ^--- Read address from config in XBee ---^
 
 	Serial.printf("Connect PIN%d to start one-shot\n", SW_PIN_1);
-	Serial.printf("Connect PIN%d to start one-shot\n", SW_PIN_2);
+	//Serial.printf("Connect PIN%d to start one-shot\n", SW_PIN_2);
 
 	while (1) {
 		if (!digitalRead(SW_PIN_1)) {
 			f_start = 1;
 			log2("One-shot mode loading...");
 			break;
-		} else if (!digitalRead(SW_PIN_2)) {
+		}/* else if (!digitalRead(SW_PIN_2)) {
 			f_start = 2;
 			log2("Continuous mode loading...");
 			break;
-		}
+		}*/
 		delay(20);
 	}
 	
 	digitalWrite(LED_B_PIN, 0);
-	
+
+	// Change config of watchdog to device-searching mode
+	// *** If ESP-32 cannot find & connect to the BLE device in 20s, reboot
+	watchdog_TO = 20000;
+	error_code = 0x01;
 	xTaskCreate(
 		watchdog,
 		"genericTask",
@@ -450,11 +468,18 @@ void setup() {
 		NULL,
 		2,
 		NULL);
-
+	
+	// Search & connect to the BLE device
 	BLEDevice::init("ESP-WROOM-32");
-	dev.init(30);
+	dev.init(10);
+	
+	// BLE device init successed
 	crash_ctr++;
-	watchdog_to = 30000;
+	
+	// Change config of watchdog to data-collection mode
+	// *** If there is no data comes in 30s, device lost, reboot
+	watchdog_TO = 30000;
+	error_code = 0x02;
 }
 
 
@@ -463,6 +488,8 @@ void loop() {
 		dev.startHRM_oneshot();
 		delay(10000);
 	}
+	
+	// It seems that nobody likes continuous mode...
 	/*
 	} else if (f_start == 2) {
 		if (!f_hrmc) {
@@ -479,7 +506,9 @@ void loop() {
 		}
 	}
 	*/
-	if (digitalRead(SW_PIN_1) && digitalRead(SW_PIN_2)) {
+	
+	// if (digitalRead(SW_PIN_1) && digitalRead(SW_PIN_2)) {
+	if (digitalRead(SW_PIN_1)) {
 		f_start = 0;
 		dev.deinit();
 		delay(3000);
